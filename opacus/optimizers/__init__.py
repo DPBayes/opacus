@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .adaclipoptimizer import AdaClipDPOptimizer
+from .adaclipoptimizer import (
+    AdaClipDPOptimizer,
+    LayerwiseAdaClipDPOptimizer,
+)
 from .ddp_perlayeroptimizer import (
     DistributedPerLayerOptimizer,
     SimpleDistributedPerLayerOptimizer,
@@ -56,6 +59,9 @@ def get_optimizer_class(clipping: str, distributed: bool, grad_sample_mode: str 
             return SimpleDistributedPerLayerOptimizer
         else:
             raise ValueError(f"Unexpected grad_sample_mode: {grad_sample_mode}")
+    elif clipping == "adapt_layer":
+        print("Using LayerwiseAdaClipDPOptimizer")
+        return LayerwiseAdaClipDPOptimizer
     elif clipping == "adaptive" and distributed is False:
         return AdaClipDPOptimizer
     raise ValueError(

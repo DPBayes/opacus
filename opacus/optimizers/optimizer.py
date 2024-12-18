@@ -206,6 +206,7 @@ class DPOptimizer(Optimizer):
         generator=None,
         secure_mode: bool = False,
         normalize_clipping: bool = False,
+        optim_args: dict = None,
     ):
         """
 
@@ -448,9 +449,18 @@ class DPOptimizer(Optimizer):
                 g.reshape(len(g), -1).norm(2, dim=-1) for g in self.grad_samples
             ]
             per_sample_norms = torch.stack(per_param_norms, dim=1).norm(2, dim=1)
+
+            #print(f"{per_sample_norms.mean()}")
+
             per_sample_clip_factor = (
                 self.max_grad_norm / (per_sample_norms + 1e-6)
             ).clamp(max=1.0)
+
+            quantiles = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]
+            quantile_values = torch.quantile(per_sample_norms, torch.tensor(quantiles).cuda())
+            for q, value in zip(quantiles, quantile_values):
+                print(f"!!! quantile {int(q * 100)}%: {value.item()}")
+            print("---------------------------")
 
         for p in self.params:
             _check_processed_flag(p.grad_sample)
@@ -486,6 +496,8 @@ class DPOptimizer(Optimizer):
             p.grad = (p.summed_grad + noise).view_as(p)
 
             _mark_as_processed(p.summed_grad)
+
+        #print(f"last noise add: {noise[:10]}")
 
     def scale_grad(self):
         """
