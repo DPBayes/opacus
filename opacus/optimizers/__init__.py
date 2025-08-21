@@ -24,6 +24,7 @@ from .ddpoptimizer_fast_gradient_clipping import (
 from .optimizer import DPOptimizer
 from .optimizer_fast_gradient_clipping import DPOptimizerFastGradientClipping
 from .perlayeroptimizer import DPPerLayerOptimizer
+from .autoclipoptimizer import AutoSFixedDPOptimizer
 
 
 __all__ = [
@@ -32,9 +33,10 @@ __all__ = [
     "DistributedDPOptimizer",
     "DPOptimizer",
     "DPOptimizerFastGradientClipping",
-    "DistributedDPOptimizerFastGradientlipping",
+    "DistributedDPOptimizerFastGradientClipping",
     "DPPerLayerOptimizer",
     "SimpleDistributedPerLayerOptimizer",
+    "AutoSFixedDPOptimizer",
 ]
 
 
@@ -58,6 +60,8 @@ def get_optimizer_class(clipping: str, distributed: bool, grad_sample_mode: str 
             raise ValueError(f"Unexpected grad_sample_mode: {grad_sample_mode}")
     elif clipping == "adaptive" and distributed is False:
         return AdaClipDPOptimizer
+    elif clipping == "Auto":
+        return AutoSFixedDPOptimizer
     raise ValueError(
         f"Unexpected optimizer parameters. Clipping: {clipping}, distributed: {distributed}"
     )

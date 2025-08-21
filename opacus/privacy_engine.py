@@ -18,6 +18,7 @@ from itertools import chain
 from typing import IO, Any, BinaryIO, Dict, List, Optional, Tuple, Union
 
 import torch
+from torch import distributed as dist
 from opacus.accountants import create_accountant
 from opacus.accountants.utils import get_noise_multiplier
 from opacus.data_loader import DPDataLoader, switch_generator
@@ -111,6 +112,7 @@ class PrivacyEngine:
         noise_generator=None,
         grad_sample_mode="hooks",
         normalize_clipping: bool = False,
+        optim_args: dict = None,
         **kwargs,
     ) -> DPOptimizer:
         if isinstance(optimizer, DPOptimizer):
@@ -137,6 +139,7 @@ class PrivacyEngine:
             generator=generator,
             secure_mode=self.secure_mode,
             normalize_clipping=normalize_clipping,
+            optim_args=optim_args,
             **kwargs,
         )
 
@@ -294,6 +297,7 @@ class PrivacyEngine:
         grad_sample_mode: str = "hooks",
         normalize_clipping: bool = False,
         total_steps: int = None,
+        optim_args: dict = None,
         **kwargs,
     ) -> Tuple[GradSampleModule, DPOptimizer, DataLoader]:
         """
@@ -375,7 +379,7 @@ class PrivacyEngine:
                     "Module parameters are different than optimizer Parameters"
                 )
 
-        distributed = isinstance(module, (DPDDP, DDP))
+        distributed = dist.get_world_size() > 1
 
         module = self._prepare_model(
             module,
@@ -427,6 +431,7 @@ class PrivacyEngine:
             clipping=clipping,
             grad_sample_mode=grad_sample_mode,
             normalize_clipping=normalize_clipping,
+            optim_args=optim_args,
             **kwargs,
         )
 
@@ -454,6 +459,7 @@ class PrivacyEngine:
         grad_sample_mode: str = "hooks",
         normalize_clipping: bool = False,
         total_steps: int = None,
+        optim_args: dict = None,
         **kwargs,
     ):
         """
@@ -569,6 +575,7 @@ class PrivacyEngine:
             clipping=clipping,
             normalize_clipping=normalize_clipping,
             total_steps=total_steps,
+            optim_args=optim_args,
         )
 
     def get_epsilon(self, delta):
