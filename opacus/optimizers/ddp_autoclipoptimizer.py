@@ -17,8 +17,12 @@ class DistributedAutoClipOptimizer(DistributedDPOptimizer):
       g_i -> g_i / (||g_i||_2 + γ), γ > 0
     Noise std equals `noise_multiplier` (σ from the accountant). We force max_grad_norm=1.
 
+    As introduced by Bu et al. (2023):
+        https://proceedings.neurips.cc/paper_files/paper/2023/file/8249b30d877c91611fd8c7aa6ac2b5fe-Paper-Conference.pdf
+
     Derived from Linzh's work on the non-DP version:
-    https://github.com/DPBayes/opacus/blob/adaptive_optimizer/opacus/optimizers/autoclipoptimizer.py
+        https://github.com/DPBayes/opacus/blob/adaptive_optimizer/opacus/optimizers/autoclipoptimizer.py
+
     """
 
     def __init__(
