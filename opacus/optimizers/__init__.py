@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from .adaclipoptimizer import AdaClipDPOptimizer
+from .ddp_autoclipoptimizer import DistributedAutoClipOptimizer
 from .ddp_perlayeroptimizer import (
     DistributedPerLayerOptimizer,
     SimpleDistributedPerLayerOptimizer,
@@ -28,6 +29,7 @@ from .perlayeroptimizer import DPPerLayerOptimizer
 
 __all__ = [
     "AdaClipDPOptimizer",
+    "DistributedAutoClipOptimizer",
     "DistributedPerLayerOptimizer",
     "DistributedDPOptimizer",
     "DPOptimizer",
