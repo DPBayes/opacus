@@ -60,6 +60,10 @@ def get_optimizer_class(clipping: str, distributed: bool, grad_sample_mode: str 
             raise ValueError(f"Unexpected grad_sample_mode: {grad_sample_mode}")
     elif clipping == "adaptive" and distributed is False:
         return AdaClipDPOptimizer
+    elif clipping == "auto" and distributed is True:
+        return DistributedAutoClipOptimizer
+    elif clipping == "auto" and distributed is False:
+        raise ValueError("Automatic clipping is only implemented for distributed.")
     raise ValueError(
         f"Unexpected optimizer parameters. Clipping: {clipping}, distributed: {distributed}"
     )
