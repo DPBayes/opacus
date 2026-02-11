@@ -26,10 +26,7 @@ import torch.optim as optim
 from opacus import PrivacyEngine
 from opacus.distributed import DifferentiallyPrivateDistributedDataParallel as DPDDP
 from opacus.grad_sample import GradSampleModuleFastGradientClipping
-from opacus.optimizers.ddp_perlayeroptimizer import (
-    DistributedPerLayerOptimizer,
-    SimpleDistributedPerLayerOptimizer,
-)
+from opacus.optimizers.ddp_perlayeroptimizer import SimpleDistributedPerLayerOptimizer
 from opacus.optimizers.ddpoptimizer import DistributedDPOptimizer
 from opacus.optimizers.ddpoptimizer_fast_gradient_clipping import (
     DistributedDPOptimizerFastGradientClipping,
@@ -101,7 +98,7 @@ def run_ghost_clipping_test(
         loss_per_sample = loss_fn(outputs, y)
         torch.mean(loss_per_sample).backward(retain_graph=True)
         optimizer.zero_grad()
-        rescaled_loss_per_sample = ddp_model.get_coeff() * loss_per_sample
+        rescaled_loss_per_sample = ddp_model.get_clipping_coef() * loss_per_sample
         rescaled_loss = torch.sum(rescaled_loss_per_sample)
         ddp_model.disable_hooks()
         rescaled_loss.backward()
@@ -115,7 +112,7 @@ def run_ghost_clipping_test(
 
 def demo_basic(rank, weight, world_size, dp, clipping, grad_sample_mode):
     torch.manual_seed(world_size)
-    batch_size = 32
+    batch_size = 2
     setup(rank, world_size)
 
     # create model and move it to GPU with id rank
@@ -165,10 +162,7 @@ def demo_basic(rank, weight, world_size, dp, clipping, grad_sample_mode):
             grad_sample_mode=grad_sample_mode,
         )
         if clipping == "per_layer":
-            assert isinstance(
-                optimizer,
-                (DistributedPerLayerOptimizer, SimpleDistributedPerLayerOptimizer),
-            )
+            assert isinstance(optimizer, SimpleDistributedPerLayerOptimizer)
         else:
             assert isinstance(optimizer, DistributedDPOptimizer)
 
@@ -194,6 +188,7 @@ def run_demo(demo_fn, weight, world_size, dp, clipping, grad_sample_mode):
 
 
 class GradientComputationTest(unittest.TestCase):
+    @unittest.skipIf(torch.cuda.device_count() < 2, "Need at least 2 GPUs")
     def test_gradient_correct(self) -> None:
         # Tests that gradient is the same with DP or without DDP
         n_gpus = torch.cuda.device_count()

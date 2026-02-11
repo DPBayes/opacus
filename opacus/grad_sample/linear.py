@@ -39,6 +39,9 @@ def compute_linear_grad_sample(
         backprops: Backpropagations
     """
     activations = activations[0]
+
+    activations = activations.to(backprops.dtype)
+
     ret = {}
     if layer.weight.requires_grad:
         gs = torch.einsum("n...i,n...j->nij", backprops, activations)
@@ -61,6 +64,8 @@ def compute_linear_norm_sample(
         backprops: Backpropagations
     """
     activations = activations[0]
+    activations = activations.to(backprops.dtype)
+
     ret = {}
 
     if backprops.dim() == 2:
@@ -83,7 +88,6 @@ def compute_linear_norm_sample(
 
             ret[layer.weight] = torch.sqrt(ga)
         if layer.bias is not None and layer.bias.requires_grad:
-            ggT = torch.einsum("nik,njk->nij", backprops, backprops)
-            gg = torch.einsum("n...i,n...i->n", ggT, ggT).clamp(min=0)
-            ret[layer.bias] = torch.sqrt(gg)
+            ggT = torch.einsum("nik,njk->nij", backprops, backprops)  # batchwise g g^T
+            ret[layer.bias] = torch.sqrt(torch.einsum("n...i->n", ggT).clamp(min=0))
     return ret

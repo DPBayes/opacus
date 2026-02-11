@@ -17,9 +17,16 @@ from .conv import compute_conv_grad_sample  # noqa
 from .dp_multihead_attention import compute_sequence_bias_grad_sample  # noqa
 from .dp_rnn import compute_rnn_linear_grad_sample  # noqa
 from .embedding import compute_embedding_grad_sample  # noqa
+from .embedding_norm_sample import compute_embedding_norm_sample  # noqa
 from .grad_sample_module import GradSampleModule, create_or_accumulate_grad_sample
 from .grad_sample_module_fast_gradient_clipping import (  # noqa
     GradSampleModuleFastGradientClipping,
+)
+from .grad_sample_module_fast_gradient_clipping_fsdp import (  # noqa
+    GradSampleModuleFastGradientClippingFSDP,
+)
+from .grad_sample_module_fast_gradient_clipping_tp import (  # noqa
+    GradSampleModuleFastGradientClippingTP,
 )
 from .group_norm import compute_group_norm_grad_sample  # noqa
 from .gsm_base import AbstractGradSampleModule
@@ -28,6 +35,7 @@ from .gsm_no_op import GradSampleModuleNoOp
 from .instance_norm import compute_instance_norm_grad_sample  # noqa
 from .layer_norm import compute_layer_norm_grad_sample  # noqa
 from .linear import compute_linear_grad_sample  # noqa
+from .rms_norm import compute_rms_norm_grad_sample  # noqa
 from .utils import (
     get_gsm_class,
     register_grad_sampler,
@@ -39,6 +47,8 @@ from .utils import (
 __all__ = [
     "GradSampleModule",
     "GradSampleModuleFastGradientClipping",
+    "GradSampleModuleFastGradientClippingFSDP",
+    "GradSampleModuleFastGradientClippingTP",
     "GradSampleModuleExpandedWeights",
     "GradSampleModuleNoOp",
     "AbstractGradSampleModule",

@@ -39,6 +39,7 @@ class DistributedDPOptimizer(DPOptimizer):
         generator=None,
         secure_mode: bool = False,
         normalize_clipping: bool = False,
+        **kwargs,
     ):
         super().__init__(
             optimizer,
@@ -49,6 +50,7 @@ class DistributedDPOptimizer(DPOptimizer):
             generator=generator,
             secure_mode=secure_mode,
             normalize_clipping=normalize_clipping,
+            **kwargs,
         )
         self.rank = torch.distributed.get_rank()
         self.world_size = torch.distributed.get_world_size()

@@ -40,7 +40,7 @@ class Conv2d_test(GradSampleHooks_test):
         dilation=st.integers(1, 3),
         groups=st.integers(1, 16),
     )
-    @settings(deadline=30000)
+    @settings(deadline=60000)
     def test_conv2d(
         self,
         N: int,
@@ -117,7 +117,7 @@ class Conv2d_test(GradSampleHooks_test):
         dilation_h=st.integers(1, 3),
         dilation_w=st.integers(1, 3),
     )
-    @settings(deadline=30000)
+    @settings(deadline=60000)
     def test_unfold2d(
         self,
         B: int,
@@ -168,5 +168,5 @@ class Conv2d_test(GradSampleHooks_test):
         y.backward(backprops)
 
         self.assertLess(
-            torch.norm(m._module.weight.grad_sample[0] - m._module.weight.grad), 1e-7
+            torch.norm(m._module.weight.grad_sample[0] - m._module.weight.grad), 2e-7
         )

@@ -21,6 +21,7 @@ from typing import Callable, List, Optional, Union
 import torch
 from opacus.optimizers.utils import params
 from torch import nn
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
 
@@ -102,10 +103,10 @@ def _check_processed_flag(obj: Union[torch.Tensor, List[torch.Tensor]]):
 
 def _generate_noise(
     std: float,
-    reference: torch.Tensor,
+    reference: Union[torch.Tensor, DTensor],
     generator=None,
     secure_mode: bool = False,
-) -> torch.Tensor:
+) -> Union[torch.Tensor, DTensor]:
     """
     Generates noise according to a Gaussian distribution with mean 0
 
@@ -134,7 +135,7 @@ def _generate_noise(
         `2^53` (easy to break) but with `n=2`, we get `2^159`, which is hard
         enough for an attacker to break.
     """
-    zeros = torch.zeros(reference.shape, device=reference.device)
+    zeros = torch.zeros(reference.shape, device=reference.device, dtype=reference.dtype)
     if std == 0:
         return zeros
     # TODO: handle device transfers: generator and reference tensor
@@ -164,6 +165,7 @@ def _generate_noise(
             size=reference.shape,
             device=reference.device,
             generator=generator,
+            dtype=reference.dtype,
         )
 
 
@@ -206,6 +208,7 @@ class DPOptimizer(Optimizer):
         generator=None,
         secure_mode: bool = False,
         normalize_clipping: bool = False,
+        **kwargs,
     ):
         """
 
@@ -447,6 +450,11 @@ class DPOptimizer(Optimizer):
             per_param_norms = [
                 g.reshape(len(g), -1).norm(2, dim=-1) for g in self.grad_samples
             ]
+
+            if per_param_norms:
+                target_device = per_param_norms[0].device
+                per_param_norms = [norm.to(target_device) for norm in per_param_norms]
+
             per_sample_norms = torch.stack(per_param_norms, dim=1).norm(2, dim=1)
             per_sample_clip_factor = (
                 self.max_grad_norm / (per_sample_norms + 1e-6)
@@ -455,7 +463,15 @@ class DPOptimizer(Optimizer):
         for p in self.params:
             _check_processed_flag(p.grad_sample)
             grad_sample = self._get_flat_grad_sample(p)
-            grad = torch.einsum("i,i...", per_sample_clip_factor, grad_sample)
+
+            # gradients should match the dtype of the optimizer parameters
+            # for mixed precision, optimizer parameters are usually in FP32
+            # lower precision grads will be cast up to FP32
+            grad_sample = grad_sample.to(p.dtype)
+            clip_factor_on_device = per_sample_clip_factor.to(grad_sample.device).to(
+                p.dtype
+            )
+            grad = torch.einsum("i,i...", clip_factor_on_device, grad_sample)
 
             if self.normalize_clipping:
                 grad /= self.max_grad_norm

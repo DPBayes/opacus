@@ -30,8 +30,10 @@ from opacus.grad_sample import (
 )
 from opacus.optimizers import DPOptimizer, get_optimizer_class
 from opacus.schedulers import _GradClipScheduler, _NoiseScheduler
+from opacus.utils.fast_gradient_clipping_utils import DPLossFastGradientClipping
 from opacus.validators.module_validator import ModuleValidator
 from torch import nn, optim
+from torch.distributed._composable.fsdp import FSDPModule
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
@@ -201,7 +203,7 @@ class PrivacyEngine:
 
             return module
         else:
-            if grad_sample_mode == "ghost":
+            if grad_sample_mode in ["ghost", "ghost_fsdp"]:
                 return wrap_model(
                     module,
                     grad_sample_mode=grad_sample_mode,
@@ -216,6 +218,26 @@ class PrivacyEngine:
                     batch_first=batch_first,
                     loss_reduction=loss_reduction,
                 )
+
+    def _prepare_criterion(
+        self,
+        *,
+        module: GradSampleModule,
+        optimizer: DPOptimizer,
+        criterion=nn.CrossEntropyLoss(),
+        loss_reduction: str = "mean",
+        **kwargs,
+    ) -> DPLossFastGradientClipping:
+        """
+        Args:
+            module: GradSampleModule used for training,
+            optimizer: DPOptimizer used for training,
+            criterion: Loss function used for training,
+            loss_reduction: "mean" or "sum", indicates if the loss reduction (for aggregating the gradients)
+
+        Prepare the DP loss class, which packages the two backward passes for fast gradient clipping.
+        """
+        return DPLossFastGradientClipping(module, optimizer, criterion, loss_reduction)
 
     def is_compatible(
         self,
@@ -283,6 +305,7 @@ class PrivacyEngine:
         *,
         module: nn.Module,
         optimizer: optim.Optimizer,
+        criterion=nn.CrossEntropyLoss(),  # Added deafult for backward compatibility
         data_loader: DataLoader,
         noise_multiplier: float,
         max_grad_norm: Union[float, List[float]],
@@ -295,7 +318,10 @@ class PrivacyEngine:
         normalize_clipping: bool = False,
         total_steps: int = None,
         **kwargs,
-    ) -> Tuple[GradSampleModule, DPOptimizer, DataLoader]:
+    ) -> Union[
+        Tuple[GradSampleModule, DPOptimizer, DataLoader],
+        Tuple[GradSampleModule, DPOptimizer, DPLossFastGradientClipping, DataLoader],
+    ]:
         """
         Add privacy-related responsibilities to the main PyTorch training objects:
         model, optimizer, and the data loader.
@@ -305,6 +331,7 @@ class PrivacyEngine:
 
         - Model is wrapped to also compute per sample gradients.
         - Optimizer is now responsible for gradient clipping and adding noise to the gradients.
+        - Criterion is a wrapper around the original criterion that packages the two backward passes for fast gradient clipping.
         - DataLoader is updated to perform Poisson sampling.
 
         Notes:
@@ -352,12 +379,14 @@ class PrivacyEngine:
             batch_size/data_size. The parameter total_steps is any positive integer.
 
         Returns:
-            Tuple of (model, optimizer, data_loader).
+            Tuple of  (model, optimizer, data_loader) or (model, optimizer, criterion, data_loader).
 
             Model is a wrapper around the original model that also computes per sample
                 gradients
             Optimizer is a wrapper around the original optimizer that also does
              gradient clipping and noise addition to the gradients
+            Criterion is a wrapper around the original criterion that packages the two backward passes for fast gradient clipping.
+                Only returned when grad_sample_mode is "ghost".
             DataLoader is a brand new DataLoader object, constructed to behave as
                 equivalent to the original data loader, possibly with updated
                 sampling mechanism. Points to the same dataset object.
@@ -375,7 +404,7 @@ class PrivacyEngine:
                     "Module parameters are different than optimizer Parameters"
                 )
 
-        distributed = isinstance(module, (DPDDP, DDP))
+        distributed = isinstance(module, (DPDDP, DDP, FSDPModule))
 
         module = self._prepare_model(
             module,
@@ -433,6 +462,16 @@ class PrivacyEngine:
         optimizer.attach_step_hook(
             self.accountant.get_optimizer_hook_fn(sample_rate=sample_rate)
         )
+        if "ghost" in grad_sample_mode:
+            criterion = self._prepare_criterion(
+                module=module,
+                optimizer=optimizer,
+                criterion=criterion,
+                loss_reduction=loss_reduction,
+                **kwargs,
+            )
+
+            return module, optimizer, criterion, data_loader
 
         return module, optimizer, data_loader
 
@@ -441,6 +480,7 @@ class PrivacyEngine:
         *,
         module: nn.Module,
         optimizer: optim.Optimizer,
+        criterion=nn.CrossEntropyLoss(),  # Added deafult for backward compatibility
         data_loader: DataLoader,
         target_epsilon: float,
         target_delta: float,
@@ -455,7 +495,10 @@ class PrivacyEngine:
         normalize_clipping: bool = False,
         total_steps: int = None,
         **kwargs,
-    ):
+    ) -> Union[
+        Tuple[GradSampleModule, DPOptimizer, DataLoader],
+        Tuple[GradSampleModule, DPOptimizer, DPLossFastGradientClipping, DataLoader],
+    ]:
         """
         Version of :meth:`~opacus.privacy_engine.PrivacyEngine.make_private`,
         that calculates privacy parameters based on a given privacy budget.
@@ -502,12 +545,14 @@ class PrivacyEngine:
             batch_size/data_size. The parameter total_steps is any positive integer.
 
         Returns:
-            Tuple of (model, optimizer, data_loader).
+            Tuple of (model, optimizer, data_loader) or (model, optimizer, criterion, data_loader).
 
             Model is a wrapper around the original model that also computes per sample
                 gradients
             Optimizer is a wrapper around the original optimizer that also does
                 gradient clipping and noise addition to the gradients
+            Criterion is a wrapper around the original criterion that packages the two backward passes for fast gradient clipping.
+                Only returned when grad_sample_mode is "ghost".
             DataLoader is a brand new DataLoader object, constructed to behave as
                 equivalent to the original data loader, possibly with updated
                 sampling mechanism. Points to the same dataset object.
@@ -635,7 +680,7 @@ class PrivacyEngine:
         module_load_dict_kwargs: Optional[Dict[str, Any]] = None,
         torch_load_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Dict:
-        checkpoint = torch.load(path, **(torch_load_kwargs or {}))
+        checkpoint = torch.load(path, **(torch_load_kwargs or {}), weights_only=False)
         module.load_state_dict(
             checkpoint["module_state_dict"], **(module_load_dict_kwargs or {})
         )

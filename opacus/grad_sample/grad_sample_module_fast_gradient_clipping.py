@@ -26,7 +26,12 @@ from opacus.grad_sample.grad_sample_module import (
     create_or_accumulate_grad_sample,
     promote_current_grad_sample,
 )
-from opacus.utils.module_utils import requires_grad, trainable_parameters
+from opacus.layers.dp_rnn import DPGRU, DPLSTM, DPRNN
+from opacus.utils.module_utils import (
+    requires_grad,
+    trainable_modules,
+    trainable_parameters,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -47,12 +52,21 @@ def create_norm_sample(
     """
 
     if param.requires_grad:
-        param._norm_sample = torch.zeros(
-            torch.Size([max_batch_len, 1]),
-            device=grad_sample.device,
-            dtype=grad_sample.dtype,
-        )
-        param._norm_sample = grad_sample.reshape(len(grad_sample), -1).norm(2, dim=-1)
+        if (
+            max_batch_len == 0
+        ):  # To handle the case of empty batch that may arise from Poisson sampling
+            param._norm_sample = torch.tensor(
+                [], device=grad_sample.device, dtype=grad_sample.dtype
+            )
+        else:
+            param._norm_sample = torch.zeros(
+                torch.Size([max_batch_len, 1]),
+                device=grad_sample.device,
+                dtype=grad_sample.dtype,
+            )
+            param._norm_sample = grad_sample.reshape(len(grad_sample), -1).norm(
+                2, dim=-1
+            )
 
 
 class GradSampleModuleFastGradientClipping(GradSampleModule):
@@ -98,28 +112,40 @@ class GradSampleModuleFastGradientClipping(GradSampleModule):
         Raises:
             NotImplementedError
                 If ``strict`` is set to ``True`` and module ``m`` (or any of its
-                submodules) doesn't have a registered grad sampler function.
+                submodules) includes a buffer.
         """
+        if logger.isEnabledFor(logging.INFO):
+            self.log_module_gradient_sample_mode(
+                module=m,
+                force_functorch=force_functorch,
+                use_ghost_clipping=use_ghost_clipping,
+            )
 
         super().__init__(
             m,
             batch_first=batch_first,
             loss_reduction=loss_reduction,
+            strict=strict,
+            force_functorch=force_functorch,
         )
         self.trainable_parameters = [p for _, p in trainable_parameters(self._module)]
         self.max_grad_norm = max_grad_norm
         self.use_ghost_clipping = use_ghost_clipping
+        self._per_sample_gradient_norms = None
 
-    def get_coeff(self) -> torch.Tensor:
+    def get_clipping_coef(self) -> torch.Tensor:
         """Get per-example gradient scaling factor for clipping."""
         norm_sample = self.get_norm_sample()
         return (self.max_grad_norm / (norm_sample + 1e-6)).clamp(max=1.0)
 
     def get_norm_sample(self) -> torch.Tensor:
         """Get per-example gradient norms."""
-        norm_sample = torch.stack(
-            [param._norm_sample for param in self.trainable_parameters], dim=0
-        ).norm(2, dim=0)
+        norm_samples = [param._norm_sample for param in self.trainable_parameters]
+        if norm_samples:
+            target_device = norm_samples[0].device
+            norm_samples = [norm.to(target_device) for norm in norm_samples]
+        norm_sample = torch.stack(norm_samples, dim=0).norm(2, dim=0)
+        self.per_sample_gradient_norms = norm_sample
         return norm_sample
 
     def capture_activations_hook(
@@ -175,12 +201,17 @@ class GradSampleModuleFastGradientClipping(GradSampleModule):
             return
 
         backprops = forward_output[0].detach()
+
         activations, backprops = self.rearrange_grad_samples(
             module=module,
             backprops=backprops,
             loss_reduction=loss_reduction,
             batch_first=batch_first,
         )
+        activations = [
+            temp.to_local() if type(temp) is torch.distributed.tensor.DTensor else temp
+            for temp in activations
+        ]
 
         if self.use_ghost_clipping and type(module) in self.NORM_SAMPLERS:
             norm_sampler_fn = self.NORM_SAMPLERS[type(module)]
@@ -215,8 +246,58 @@ class GradSampleModuleFastGradientClipping(GradSampleModule):
                         grad_sample=p.grad_sample,
                         max_batch_len=module.max_batch_len,
                     )
-                    del p.grad_sample
-
+                    p.grad_sample = None
         if len(module.activations) == 0:
             if hasattr(module, "max_batch_len"):
                 del module.max_batch_len
+
+    def log_module_gradient_sample_mode(
+        self, module: nn.Module, *, force_functorch=False, use_ghost_clipping=True
+    ):
+        """
+        Add logs to track gradient sample mode for each part of the module, including 1) Ghost Clipping, 2) Fast Gradient Clipping (hook mode), and 3) Fast Gradient Clipping (functorch mode).
+
+        Args:
+            module: nn.Module to be checked
+            force_functorch: If set to ``True``, will use functorch to compute
+                all per sample gradients. Otherwise, functorch will be used only
+                for layers without registered grad sampler methods.
+            use_ghost_clipping: If set to ``True``, Ghost Clipping
+                will be used for clipping gradients of supported layers. If ``False``, Fast
+                Gradient Clipping will be used for all layers.
+        """
+        for m_name, m in trainable_modules(module):
+            if type(m) in [DPRNN, DPLSTM, DPGRU]:
+                logger.info(
+                    f"Module name: {m_name}, module type: {type(m)}. No hook or functorch is added."
+                )
+
+            elif use_ghost_clipping and type(m) in self.NORM_SAMPLERS:
+                logger.info(
+                    f"Module name: {m_name}, module type: {type(m)}, under Ghost Clipping."
+                )
+
+            else:
+                if not force_functorch and type(m) in self.GRAD_SAMPLERS:
+                    # When functorch is not enforced, use FGC (hook mode) if the layer has a registered grad_sampler (supported). Otherwise, use FGC (functorch mode).
+                    logger.info(
+                        f"Module name: {m_name}, module type: {type(m)}, under Fast Gradient Clipping (hook mode)."
+                    )
+                else:
+                    logger.info(
+                        f"Module name: {m_name}, module type: {type(m)}, under Fast Gradient Clipping (functorch mode)."
+                    )
+
+    @property
+    def per_sample_gradient_norms(self) -> torch.Tensor:
+        """Returns per sample gradient norms. Note that these are not privatized and should only be used for debugging purposes or in non-private settings"""
+        if self._per_sample_gradient_norms is not None:
+            return self._per_sample_gradient_norms
+        else:
+            raise AttributeError(
+                "per_sample_gradient_norms is not set. Please call forward and backward on the model before accessing this property."
+            )
+
+    @per_sample_gradient_norms.setter
+    def per_sample_gradient_norms(self, value):
+        self._per_sample_gradient_norms = value

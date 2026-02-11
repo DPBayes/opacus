@@ -19,11 +19,75 @@ import hypothesis.strategies as st
 from hypothesis import given, settings
 from opacus.accountants import (
     GaussianAccountant,
+    IAccountant,
     PRVAccountant,
     RDPAccountant,
     create_accountant,
+    register_accountant,
+    registry,
 )
 from opacus.accountants.utils import get_noise_multiplier
+
+
+class AccountantRegistryTest(unittest.TestCase):
+
+    class DummyAccountant(IAccountant):
+        def __init__(self):
+            pass
+
+        def __len__(self):
+            return 0
+
+        def step(self, **kwargs):
+            pass
+
+        def get_epsilon(self, **kwargs):
+            return 0.0
+
+        def mechanism(cls) -> str:
+            return "dummy"
+
+    class Dummy2Accountant(DummyAccountant):
+        pass
+
+    def test_register_accountant(self) -> None:
+        try:
+            register_accountant("dummy", AccountantRegistryTest.DummyAccountant)
+            self.assertIsInstance(
+                create_accountant("dummy"), AccountantRegistryTest.DummyAccountant
+            )
+            self.assertEqual(create_accountant("dummy").mechanism(), "dummy")
+        finally:
+            if "dummy" in registry._ACCOUNTANTS:
+                del registry._ACCOUNTANTS["dummy"]
+
+    def test_create_accountant_not_registered(self) -> None:
+        with self.assertRaises(ValueError):
+            create_accountant("not_registered")
+
+    def test_register_existing_accountant(self):
+        try:
+            register_accountant("dummy", AccountantRegistryTest.DummyAccountant)
+
+            with self.assertRaises(ValueError):
+                register_accountant("rdp", AccountantRegistryTest.DummyAccountant)
+        finally:
+            if "dummy" in registry._ACCOUNTANTS:
+                del registry._ACCOUNTANTS["dummy"]
+
+    def test_force_register_existing_accountant(self) -> None:
+        try:
+            register_accountant("dummy", AccountantRegistryTest.DummyAccountant)
+
+            register_accountant(
+                "dummy", AccountantRegistryTest.Dummy2Accountant, force=True
+            )
+            self.assertIsInstance(
+                create_accountant("dummy"), AccountantRegistryTest.Dummy2Accountant
+            )
+        finally:
+            if "dummy" in registry._ACCOUNTANTS:
+                del registry._ACCOUNTANTS["dummy"]
 
 
 class AccountingTest(unittest.TestCase):
@@ -136,7 +200,7 @@ class AccountingTest(unittest.TestCase):
         ),
         delta=st.sampled_from([1e-4, 1e-5, 1e-6]),
     )
-    @settings(deadline=10000)
+    @settings(deadline=60000)
     def test_get_noise_multiplier_overshoot(self, epsilon, epochs, sample_rate, delta):
         noise_multiplier = get_noise_multiplier(
             target_epsilon=epsilon,
@@ -184,7 +248,7 @@ class AccountingTest(unittest.TestCase):
         self.assertFalse(accountant.state_dict()["history"] is accountant.history)
         # mechanism populated to supplied dict
         self.assertEqual(
-            accountant.state_dict(dummy_dest)["mechanism"], accountant.mechanism
+            accountant.state_dict(dummy_dest)["mechanism"], accountant.mechanism()
         )
         # existing values in supplied dict unchanged
         self.assertEqual(

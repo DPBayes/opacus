@@ -21,13 +21,16 @@ from .grad_sample_module import GradSampleModule
 from .grad_sample_module_fast_gradient_clipping import (
     GradSampleModuleFastGradientClipping,
 )
+from .grad_sample_module_fast_gradient_clipping_fsdp import (
+    GradSampleModuleFastGradientClippingFSDP,
+)
 from .gsm_base import AbstractGradSampleModule
 from .gsm_exp_weights import GradSampleModuleExpandedWeights
 from .gsm_no_op import GradSampleModuleNoOp
 
 
 def register_grad_sampler(
-    target_class_or_classes: Union[Type[nn.Module], Sequence[Type[nn.Module]]]
+    target_class_or_classes: Union[Type[nn.Module], Sequence[Type[nn.Module]]],
 ):
     """
     Registers the decorated function as the ``grad_sampler`` of ``target_class_or_classes``, which is
@@ -56,7 +59,7 @@ def register_grad_sampler(
 
 
 def register_norm_sampler(
-    target_class_or_classes: Union[Type[nn.Module], Sequence[Type[nn.Module]]]
+    target_class_or_classes: Union[Type[nn.Module], Sequence[Type[nn.Module]]],
 ):
     """
     Registers the decorated function as the ``norm_sampler`` of ``target_class_or_classes``, which is
@@ -102,6 +105,8 @@ def get_gsm_class(grad_sample_mode: str) -> Type[AbstractGradSampleModule]:
         return GradSampleModuleExpandedWeights
     elif grad_sample_mode == "ghost":
         return GradSampleModuleFastGradientClipping
+    elif grad_sample_mode == "ghost_fsdp":
+        return GradSampleModuleFastGradientClippingFSDP
     elif grad_sample_mode == "no_op":
         return GradSampleModuleNoOp
     else:

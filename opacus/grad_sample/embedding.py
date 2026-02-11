@@ -13,12 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict
+from typing import Dict, List
 
 import torch
 import torch.nn as nn
+from opacus.grad_sample import embedding_norm_sample
 
-from .utils import register_grad_sampler
+from .utils import register_grad_sampler, register_norm_sampler
 
 
 @register_grad_sampler(nn.Embedding)
@@ -50,7 +51,10 @@ def compute_embedding_grad_sample(
             .reshape(batch_size, -1, layer.embedding_dim)
         )
         grad_sample = torch.zeros(
-            batch_size, *layer.weight.shape, device=layer.weight.device
+            batch_size,
+            *layer.weight.shape,
+            device=layer.weight.device,
+            dtype=backprops.dtype
         )
         grad_sample.scatter_add_(
             1, index, backprops.reshape(batch_size, -1, layer.embedding_dim)
@@ -64,7 +68,13 @@ def compute_embedding_grad_sample(
 def compute_embeddingbag_gradsampler(layer, inputs, backprops):
     index, offset = inputs
     batch_size = offset.shape[0]
-    gsm = torch.zeros(batch_size, layer.num_embeddings, layer.embedding_dim)
+    gsm = torch.zeros(
+        batch_size,
+        layer.num_embeddings,
+        layer.embedding_dim,
+        device=index.device,
+        dtype=backprops.dtype,
+    )
 
     for i in range(batch_size):
         begin = offset[i]
@@ -82,3 +92,24 @@ def compute_embeddingbag_gradsampler(layer, inputs, backprops):
     ret[layer.weight] = gsm
 
     return ret
+
+
+@register_norm_sampler(nn.Embedding)
+def compute_embedding_norm_sample(
+    layer: nn.Embedding,
+    activations: List[torch.Tensor],
+    backprops: torch.Tensor,
+) -> Dict[nn.Parameter, torch.Tensor]:
+    """Computes gradient norms for ``nn.Embedding`` layer.
+
+    Args:
+      layer: Layer
+      activations: Activations
+      backprops: Backpropagations
+
+    Returns:
+      A dictionary of parameter gradients
+    """
+    return embedding_norm_sample.compute_embedding_norm_sample(
+        layer, activations, backprops
+    )

@@ -105,10 +105,9 @@ class GradSampleModule(AbstractGradSampleModule):
                 ``[K, batch_size, ...]``
             loss_reduction: Indicates if the loss reduction (for aggregating the gradients)
                 is a sum or a mean operation. Can take values "sum" or "mean"
-            strict: If set to ``True``, the input module will be validated to check that
-                ``GradSampleModule`` has grad sampler functions for all submodules of
-                the input module (i.e. if it knows how to calculate per sample gradients)
-                for all model parameters. If set to ``False``, per sample gradients will
+            strict: If set to ``True``, the input module will be validated to make sure that none of its submodules includes buffers,
+                which is not currently supported by Opacus.
+                If set to ``False``, per sample gradients will
                 be computed on "best effort" basis - they will be available where
                 possible and set to None otherwise. This is not recommended, because
                 some unsupported modules (e.g. BatchNorm) affect other parameters and
@@ -120,7 +119,7 @@ class GradSampleModule(AbstractGradSampleModule):
         Raises:
             NotImplementedError
                 If ``strict`` is set to ``True`` and module ``m`` (or any of its
-                submodules) doesn't have a registered grad sampler function.
+                submodules) includes a buffer.
         """
         super().__init__(
             m,
@@ -164,6 +163,9 @@ class GradSampleModule(AbstractGradSampleModule):
         for m in module.children():
             yield from self.iterate_submodules(m)
 
+    def _get_module_type(self, module: nn.Module) -> str:
+        return type(module)
+
     def add_hooks(
         self,
         *,
@@ -200,7 +202,8 @@ class GradSampleModule(AbstractGradSampleModule):
             if type(module) in [DPRNN, DPLSTM, DPGRU]:
                 continue
 
-            if force_functorch or not type(module) in self.GRAD_SAMPLERS:
+            module_type = self._get_module_type(module)
+            if force_functorch or not (module_type in self.GRAD_SAMPLERS):
                 prepare_layer(module, batch_first=batch_first)
 
             self.autograd_grad_sample_hooks.append(
@@ -208,7 +211,7 @@ class GradSampleModule(AbstractGradSampleModule):
             )
 
             self.autograd_grad_sample_hooks.append(
-                module.register_backward_hook(
+                module.register_full_backward_hook(
                     partial(
                         self.capture_backprops_hook,
                         loss_reduction=loss_reduction,
@@ -331,8 +334,11 @@ class GradSampleModule(AbstractGradSampleModule):
             loss_reduction=loss_reduction,
             batch_first=batch_first,
         )
-        if not self.force_functorch and type(module) in self.GRAD_SAMPLERS:
-            grad_sampler_fn = self.GRAD_SAMPLERS[type(module)]
+        if (
+            not self.force_functorch
+            and self._get_module_type(module) in self.GRAD_SAMPLERS
+        ):
+            grad_sampler_fn = self.GRAD_SAMPLERS[self._get_module_type(module)]
         else:
             grad_sampler_fn = ft_compute_per_sample_gradient
 

@@ -55,6 +55,7 @@ class SimpleDistributedPerLayerOptimizer(DPPerLayerOptimizer, DistributedDPOptim
         generator=None,
         secure_mode: bool = False,
         normalize_clipping: bool = False,
+        **kwargs,
     ):
         self.rank = torch.distributed.get_rank()
         self.world_size = torch.distributed.get_world_size()
@@ -88,6 +89,7 @@ class DistributedPerLayerOptimizer(DPOptimizer):
         generator=None,
         secure_mode: bool = False,
         normalize_clipping: bool = False,
+        **kwargs,
     ):
         self.rank = torch.distributed.get_rank()
         self.world_size = torch.distributed.get_world_size()
