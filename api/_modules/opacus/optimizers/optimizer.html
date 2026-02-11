@@ -48,6 +48,7 @@
 <span class="kn">import</span> <span class="nn">torch</span>
 <span class="kn">from</span> <span class="nn">opacus.optimizers.utils</span> <span class="kn">import</span> <span class="n">params</span>
 <span class="kn">from</span> <span class="nn">torch</span> <span class="kn">import</span> <span class="n">nn</span>
+<span class="kn">from</span> <span class="nn">torch.distributed.tensor</span> <span class="kn">import</span> <span class="n">DTensor</span>
 <span class="kn">from</span> <span class="nn">torch.optim</span> <span class="kn">import</span> <span class="n">Optimizer</span>
 
 
@@ -129,10 +130,10 @@
 
 <span class="k">def</span> <span class="nf">_generate_noise</span><span class="p">(</span>
     <span class="n">std</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
-    <span class="n">reference</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">reference</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">DTensor</span><span class="p">],</span>
     <span class="n">generator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">secure_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">DTensor</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Generates noise according to a Gaussian distribution with mean 0</span>
 
@@ -161,7 +162,7 @@
 <span class="sd">        `2^53` (easy to break) but with `n=2`, we get `2^159`, which is hard</span>
 <span class="sd">        enough for an attacker to break.</span>
 <span class="sd">    """</span>
-    <span class="n">zeros</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">reference</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">reference</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">zeros</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">reference</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">reference</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">reference</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">std</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">zeros</span>
     <span class="c1"># TODO: handle device transfers: generator and reference tensor</span>
@@ -191,6 +192,7 @@
             <span class="n">size</span><span class="o">=</span><span class="n">reference</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
             <span class="n">device</span><span class="o">=</span><span class="n">reference</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
             <span class="n">generator</span><span class="o">=</span><span class="n">generator</span><span class="p">,</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">reference</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
         <span class="p">)</span>
 
 
@@ -235,6 +237,7 @@
         <span class="n">generator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
         <span class="n">secure_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">normalize_clipping</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">"""</span>
 
@@ -484,6 +487,11 @@
             <span class="n">per_param_norms</span> <span class="o">=</span> <span class="p">[</span>
                 <span class="n">g</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">g</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">grad_samples</span>
             <span class="p">]</span>
+
+            <span class="k">if</span> <span class="n">per_param_norms</span><span class="p">:</span>
+                <span class="n">target_device</span> <span class="o">=</span> <span class="n">per_param_norms</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">device</span>
+                <span class="n">per_param_norms</span> <span class="o">=</span> <span class="p">[</span><span class="n">norm</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">target_device</span><span class="p">)</span> <span class="k">for</span> <span class="n">norm</span> <span class="ow">in</span> <span class="n">per_param_norms</span><span class="p">]</span>
+
             <span class="n">per_sample_norms</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">per_param_norms</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
             <span class="n">per_sample_clip_factor</span> <span class="o">=</span> <span class="p">(</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">max_grad_norm</span> <span class="o">/</span> <span class="p">(</span><span class="n">per_sample_norms</span> <span class="o">+</span> <span class="mf">1e-6</span><span class="p">)</span>
@@ -492,7 +500,15 @@
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">:</span>
             <span class="n">_check_processed_flag</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">grad_sample</span><span class="p">)</span>
             <span class="n">grad_sample</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_flat_grad_sample</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
-            <span class="n">grad</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"i,i..."</span><span class="p">,</span> <span class="n">per_sample_clip_factor</span><span class="p">,</span> <span class="n">grad_sample</span><span class="p">)</span>
+
+            <span class="c1"># gradients should match the dtype of the optimizer parameters</span>
+            <span class="c1"># for mixed precision, optimizer parameters are usually in FP32</span>
+            <span class="c1"># lower precision grads will be cast up to FP32</span>
+            <span class="n">grad_sample</span> <span class="o">=</span> <span class="n">grad_sample</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+            <span class="n">clip_factor_on_device</span> <span class="o">=</span> <span class="n">per_sample_clip_factor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">grad_sample</span><span class="o">.</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span>
+                <span class="n">p</span><span class="o">.</span><span class="n">dtype</span>
+            <span class="p">)</span>
+            <span class="n">grad</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"i,i..."</span><span class="p">,</span> <span class="n">clip_factor_on_device</span><span class="p">,</span> <span class="n">grad_sample</span><span class="p">)</span>
 
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">normalize_clipping</span><span class="p">:</span>
                 <span class="n">grad</span> <span class="o">/=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_grad_norm</span>
@@ -654,6 +670,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../privacy_engine.html">Privacy Engine</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../grad_sample_module.html">GradSampleModule</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../grad_sample_module_fast_gradient_clipping.html">GradSampleModuleFastGradientClipping</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../optim/optimizers.html">Optimizers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../data_loader.html">DP Data Loader</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../accounting/accounting.html">Privacy Accounting</a></li>
@@ -677,7 +694,7 @@
 </div>
 </div>
 <div class="clearer"></div>
-</div></div></div><footer class="nav-footer" id="footer"><section class="sitemap"><a href="/" class="nav-home"><img src="/img/opacus_favicon.svg" alt="Opacus" width="66" height="58"/></a><div class="footerSection"><h5>Docs</h5><a href="/docs/introduction">Introduction</a><a href="/docs/faq">FAQ</a><a href="/tutorials/">Tutorials</a><a href="/api/">API Reference</a></div><div class="footerSection"><h5>Github</h5><div class="social"><a class="github-button" href="https://github.com/pytorch/opacus" data-count-href="https://github.com/pytorch/opacus/stargazers" data-show-count="true" data-count-aria-label="# stargazers on GitHub" aria-label="Star Opacus on GitHub">opacus</a></div></div><div class="footerSection"><h5>Legal</h5><a href="https://opensource.facebook.com/legal/privacy/" target="_blank" rel="noreferrer noopener">Privacy</a><a href="https://opensource.facebook.com/legal/terms/" target="_blank" rel="noreferrer noopener">Terms</a></div></section><a href="https://opensource.facebook.com/" target="_blank" rel="noreferrer noopener" class="fbOpenSource"><img src="/img/oss_logo.png" alt="Meta Open Source" width="250" height="95"/></a><section class="copyright"> Copyright © 2024 Meta Platforms, Inc.</section></footer></div><script type="text/javascript" src="https://cdn.jsdelivr.net/docsearch.js/1/docsearch.min.js"></script><script>
+</div></div></div><footer class="nav-footer" id="footer"><section class="sitemap"><a href="/" class="nav-home"><img src="/img/opacus_favicon.svg" alt="Opacus" width="66" height="58"/></a><div class="footerSection"><h5>Docs</h5><a href="/docs/introduction">Introduction</a><a href="/docs/faq">FAQ</a><a href="/tutorials/">Tutorials</a><a href="/api/">API Reference</a></div><div class="footerSection"><h5>Github</h5><div class="social"><a class="github-button" href="https://github.com/meta-pytorch/opacus" data-count-href="https://github.com/meta-pytorch/opacus/stargazers" data-show-count="true" data-count-aria-label="# stargazers on GitHub" aria-label="Star Opacus on GitHub">opacus</a></div></div><div class="footerSection"><h5>Legal</h5><a href="https://opensource.facebook.com/legal/privacy/" target="_blank" rel="noreferrer noopener">Privacy</a><a href="https://opensource.facebook.com/legal/terms/" target="_blank" rel="noreferrer noopener">Terms</a></div></section><a href="https://opensource.facebook.com/" target="_blank" rel="noreferrer noopener" class="fbOpenSource"><img src="/img/oss_logo.png" alt="Meta Open Source" width="250" height="95"/></a><section class="copyright"> Copyright © 2026 Meta Platforms, Inc.</section></footer></div><script type="text/javascript" src="https://cdn.jsdelivr.net/docsearch.js/1/docsearch.min.js"></script><script>
                 document.addEventListener('keyup', function(e) {
                   if (e.target !== document.body) {
                     return;

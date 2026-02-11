@@ -137,10 +137,9 @@
 <span class="sd">                ``[K, batch_size, ...]``</span>
 <span class="sd">            loss_reduction: Indicates if the loss reduction (for aggregating the gradients)</span>
 <span class="sd">                is a sum or a mean operation. Can take values "sum" or "mean"</span>
-<span class="sd">            strict: If set to ``True``, the input module will be validated to check that</span>
-<span class="sd">                ``GradSampleModule`` has grad sampler functions for all submodules of</span>
-<span class="sd">                the input module (i.e. if it knows how to calculate per sample gradients)</span>
-<span class="sd">                for all model parameters. If set to ``False``, per sample gradients will</span>
+<span class="sd">            strict: If set to ``True``, the input module will be validated to make sure that none of its submodules includes buffers,</span>
+<span class="sd">                which is not currently supported by Opacus.</span>
+<span class="sd">                If set to ``False``, per sample gradients will</span>
 <span class="sd">                be computed on "best effort" basis - they will be available where</span>
 <span class="sd">                possible and set to None otherwise. This is not recommended, because</span>
 <span class="sd">                some unsupported modules (e.g. BatchNorm) affect other parameters and</span>
@@ -152,7 +151,7 @@
 <span class="sd">        Raises:</span>
 <span class="sd">            NotImplementedError</span>
 <span class="sd">                If ``strict`` is set to ``True`` and module ``m`` (or any of its</span>
-<span class="sd">                submodules) doesn't have a registered grad sampler function.</span>
+<span class="sd">                submodules) includes a buffer.</span>
 <span class="sd">        """</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
             <span class="n">m</span><span class="p">,</span>
@@ -199,6 +198,9 @@
         <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">module</span><span class="o">.</span><span class="n">children</span><span class="p">():</span>
             <span class="k">yield from</span> <span class="bp">self</span><span class="o">.</span><span class="n">iterate_submodules</span><span class="p">(</span><span class="n">m</span><span class="p">)</span>
 
+    <span class="k">def</span> <span class="nf">_get_module_type</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>
+
 <div class="viewcode-block" id="GradSampleModule.add_hooks">
 <a class="viewcode-back" href="../../../grad_sample_module.html#opacus.grad_sample.grad_sample_module.GradSampleModule.add_hooks">[docs]</a>
     <span class="k">def</span> <span class="nf">add_hooks</span><span class="p">(</span>
@@ -237,7 +239,8 @@
             <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span> <span class="ow">in</span> <span class="p">[</span><span class="n">DPRNN</span><span class="p">,</span> <span class="n">DPLSTM</span><span class="p">,</span> <span class="n">DPGRU</span><span class="p">]:</span>
                 <span class="k">continue</span>
 
-            <span class="k">if</span> <span class="n">force_functorch</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">GRAD_SAMPLERS</span><span class="p">:</span>
+            <span class="n">module_type</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_module_type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">force_functorch</span> <span class="ow">or</span> <span class="ow">not</span> <span class="p">(</span><span class="n">module_type</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">GRAD_SAMPLERS</span><span class="p">):</span>
                 <span class="n">prepare_layer</span><span class="p">(</span><span class="n">module</span><span class="p">,</span> <span class="n">batch_first</span><span class="o">=</span><span class="n">batch_first</span><span class="p">)</span>
 
             <span class="bp">self</span><span class="o">.</span><span class="n">autograd_grad_sample_hooks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
@@ -245,7 +248,7 @@
             <span class="p">)</span>
 
             <span class="bp">self</span><span class="o">.</span><span class="n">autograd_grad_sample_hooks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="n">module</span><span class="o">.</span><span class="n">register_backward_hook</span><span class="p">(</span>
+                <span class="n">module</span><span class="o">.</span><span class="n">register_full_backward_hook</span><span class="p">(</span>
                     <span class="n">partial</span><span class="p">(</span>
                         <span class="bp">self</span><span class="o">.</span><span class="n">capture_backprops_hook</span><span class="p">,</span>
                         <span class="n">loss_reduction</span><span class="o">=</span><span class="n">loss_reduction</span><span class="p">,</span>
@@ -380,8 +383,11 @@
             <span class="n">loss_reduction</span><span class="o">=</span><span class="n">loss_reduction</span><span class="p">,</span>
             <span class="n">batch_first</span><span class="o">=</span><span class="n">batch_first</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">force_functorch</span> <span class="ow">and</span> <span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">GRAD_SAMPLERS</span><span class="p">:</span>
-            <span class="n">grad_sampler_fn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">GRAD_SAMPLERS</span><span class="p">[</span><span class="nb">type</span><span class="p">(</span><span class="n">module</span><span class="p">)]</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">force_functorch</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_module_type</span><span class="p">(</span><span class="n">module</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">GRAD_SAMPLERS</span>
+        <span class="p">):</span>
+            <span class="n">grad_sampler_fn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">GRAD_SAMPLERS</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_get_module_type</span><span class="p">(</span><span class="n">module</span><span class="p">)]</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">grad_sampler_fn</span> <span class="o">=</span> <span class="n">ft_compute_per_sample_gradient</span>
 
@@ -597,6 +603,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../privacy_engine.html">Privacy Engine</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../grad_sample_module.html">GradSampleModule</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../grad_sample_module_fast_gradient_clipping.html">GradSampleModuleFastGradientClipping</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../optim/optimizers.html">Optimizers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../data_loader.html">DP Data Loader</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../accounting/accounting.html">Privacy Accounting</a></li>
@@ -620,7 +627,7 @@
 </div>
 </div>
 <div class="clearer"></div>
-</div></div></div><footer class="nav-footer" id="footer"><section class="sitemap"><a href="/" class="nav-home"><img src="/img/opacus_favicon.svg" alt="Opacus" width="66" height="58"/></a><div class="footerSection"><h5>Docs</h5><a href="/docs/introduction">Introduction</a><a href="/docs/faq">FAQ</a><a href="/tutorials/">Tutorials</a><a href="/api/">API Reference</a></div><div class="footerSection"><h5>Github</h5><div class="social"><a class="github-button" href="https://github.com/pytorch/opacus" data-count-href="https://github.com/pytorch/opacus/stargazers" data-show-count="true" data-count-aria-label="# stargazers on GitHub" aria-label="Star Opacus on GitHub">opacus</a></div></div><div class="footerSection"><h5>Legal</h5><a href="https://opensource.facebook.com/legal/privacy/" target="_blank" rel="noreferrer noopener">Privacy</a><a href="https://opensource.facebook.com/legal/terms/" target="_blank" rel="noreferrer noopener">Terms</a></div></section><a href="https://opensource.facebook.com/" target="_blank" rel="noreferrer noopener" class="fbOpenSource"><img src="/img/oss_logo.png" alt="Meta Open Source" width="250" height="95"/></a><section class="copyright"> Copyright © 2024 Meta Platforms, Inc.</section></footer></div><script type="text/javascript" src="https://cdn.jsdelivr.net/docsearch.js/1/docsearch.min.js"></script><script>
+</div></div></div><footer class="nav-footer" id="footer"><section class="sitemap"><a href="/" class="nav-home"><img src="/img/opacus_favicon.svg" alt="Opacus" width="66" height="58"/></a><div class="footerSection"><h5>Docs</h5><a href="/docs/introduction">Introduction</a><a href="/docs/faq">FAQ</a><a href="/tutorials/">Tutorials</a><a href="/api/">API Reference</a></div><div class="footerSection"><h5>Github</h5><div class="social"><a class="github-button" href="https://github.com/meta-pytorch/opacus" data-count-href="https://github.com/meta-pytorch/opacus/stargazers" data-show-count="true" data-count-aria-label="# stargazers on GitHub" aria-label="Star Opacus on GitHub">opacus</a></div></div><div class="footerSection"><h5>Legal</h5><a href="https://opensource.facebook.com/legal/privacy/" target="_blank" rel="noreferrer noopener">Privacy</a><a href="https://opensource.facebook.com/legal/terms/" target="_blank" rel="noreferrer noopener">Terms</a></div></section><a href="https://opensource.facebook.com/" target="_blank" rel="noreferrer noopener" class="fbOpenSource"><img src="/img/oss_logo.png" alt="Meta Open Source" width="250" height="95"/></a><section class="copyright"> Copyright © 2026 Meta Platforms, Inc.</section></footer></div><script type="text/javascript" src="https://cdn.jsdelivr.net/docsearch.js/1/docsearch.min.js"></script><script>
                 document.addEventListener('keyup', function(e) {
                   if (e.target !== document.body) {
                     return;
